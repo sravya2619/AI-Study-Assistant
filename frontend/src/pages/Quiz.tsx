@@ -28,14 +28,22 @@ function Quiz() {
 
     const [questions, setQuestions] = useState<QuizQuestion[]>([]);
     const [currentQuestion, setCurrentQuestion] = useState(0);
-    const [selectedAnswer, setSelectedAnswer] =
-        useState<number | null>(null);
+    const [selectedAnswer, setSelectedAnswer] = useState<number | null>(null);
 
     const [score, setScore] = useState(0);
     const [submitted, setSubmitted] = useState(false);
     const [finished, setFinished] = useState(false);
+
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState("");
+
+    // =====================================================
+    // SELECTED DOCUMENT
+    // =====================================================
+
+    const selectedDocument = documents.find(
+        (document) => document.document_id === selectedDocumentId
+    );
 
     // =====================================================
     // LOAD STUDY MATERIALS
@@ -62,13 +70,20 @@ function Quiz() {
                         firstDocument.document_id
                     );
 
-                    await API.post(
-                        "/documents/select",
-                        {
-                            document_id:
-                                firstDocument.document_id,
-                        }
-                    );
+                    try {
+                        await API.post(
+                            "/documents/select",
+                            {
+                                document_id:
+                                    firstDocument.document_id,
+                            }
+                        );
+                    } catch (selectError) {
+                        console.error(
+                            "Could not select first document:",
+                            selectError
+                        );
+                    }
                 }
             } catch (err) {
                 console.error(
@@ -108,6 +123,7 @@ function Quiz() {
 
             setSelectedDocumentId(documentId);
 
+            // Reset quiz
             setQuestions([]);
             setCurrentQuestion(0);
             setSelectedAnswer(null);
@@ -138,6 +154,7 @@ function Quiz() {
 
         setLoading(true);
         setError("");
+
         setQuestions([]);
         setCurrentQuestion(0);
         setSelectedAnswer(null);
@@ -149,8 +166,7 @@ function Quiz() {
             const response = await API.post(
                 "/quiz",
                 {
-                    document_id:
-                        selectedDocumentId,
+                    document_id: selectedDocumentId,
                 }
             );
 
@@ -161,21 +177,16 @@ function Quiz() {
 
             let quizData: any = response.data;
 
-            // =================================================
-            // HANDLE { quiz: [...] }
-            // =================================================
-
+            // Handle { quiz: [...] }
             if (
                 quizData &&
+                !Array.isArray(quizData) &&
                 quizData.quiz !== undefined
             ) {
                 quizData = quizData.quiz;
             }
 
-            // =================================================
-            // HANDLE { questions: [...] }
-            // =================================================
-
+            // Handle { questions: [...] }
             if (
                 quizData &&
                 !Array.isArray(quizData) &&
@@ -184,10 +195,7 @@ function Quiz() {
                 quizData = quizData.questions;
             }
 
-            // =================================================
-            // HANDLE JSON STRING
-            // =================================================
-
+            // Handle JSON string
             if (typeof quizData === "string") {
                 try {
                     quizData = JSON.parse(quizData);
@@ -205,10 +213,7 @@ function Quiz() {
                 }
             }
 
-            // =================================================
-            // HANDLE { questions: [...] } AFTER PARSING
-            // =================================================
-
+            // Handle { questions: [...] } after parsing
             if (
                 quizData &&
                 !Array.isArray(quizData) &&
@@ -217,10 +222,7 @@ function Quiz() {
                 quizData = quizData.questions;
             }
 
-            // =================================================
-            // VALIDATE QUIZ
-            // =================================================
-
+            // Validate quiz
             if (
                 !Array.isArray(quizData) ||
                 quizData.length === 0
@@ -231,7 +233,7 @@ function Quiz() {
                 );
 
                 setError(
-                    "The AI did not return valid quiz questions."
+                    "The AI response was received, but no usable questions were found."
                 );
 
                 return;
@@ -269,36 +271,24 @@ function Quiz() {
                         item.reason ??
                         "";
 
-                    // -----------------------------------------
-                    // Validate question
-                    // -----------------------------------------
-
                     if (!questionText) {
                         return null;
                     }
 
-                    // -----------------------------------------
-                    // Convert string options to array
-                    // -----------------------------------------
-
+                    // Convert string options into array
                     if (typeof options === "string") {
                         options = options
                             .split("\n")
-                            .map(
-                                (option: string) =>
-                                    option
-                                        .replace(
-                                            /^[A-Da-d][.)]\s*/,
-                                            ""
-                                        )
-                                        .trim()
+                            .map((option: string) =>
+                                option
+                                    .replace(
+                                        /^[A-Da-d][.)]\s*/,
+                                        ""
+                                    )
+                                    .trim()
                             )
                             .filter(Boolean);
                     }
-
-                    // -----------------------------------------
-                    // Validate options
-                    // -----------------------------------------
 
                     if (!Array.isArray(options)) {
                         return null;
@@ -308,20 +298,12 @@ function Quiz() {
                         return null;
                     }
 
-                    // -----------------------------------------
-                    // Convert options to strings
-                    // -----------------------------------------
-
                     const cleanedOptions: string[] =
-                        options.map(
-                            (option: any) =>
-                                String(option)
+                        options.map((option: any) =>
+                            String(option)
                         );
 
-                    // -----------------------------------------
                     // Convert answer to index
-                    // -----------------------------------------
-
                     if (typeof answer === "string") {
                         const cleanedAnswer =
                             answer.trim();
@@ -352,72 +334,49 @@ function Quiz() {
                                 answer = answerIndex;
                             } else if (
                                 !isNaN(
-                                    Number(
-                                        cleanedAnswer
-                                    )
+                                    Number(cleanedAnswer)
                                 )
                             ) {
-                                answer = Number(
-                                    cleanedAnswer
-                                );
+                                const numericAnswer =
+                                    Number(cleanedAnswer);
 
-                                // Convert 1-4 to 0-3
+                                // Convert 1-4 into 0-3
                                 if (
-                                    answer >= 1 &&
-                                    answer <=
+                                    numericAnswer >= 1 &&
+                                    numericAnswer <=
                                         cleanedOptions.length
                                 ) {
                                     answer =
-                                        answer - 1;
+                                        numericAnswer - 1;
+                                } else {
+                                    answer =
+                                        numericAnswer;
                                 }
                             }
                         }
                     }
 
-                    // -----------------------------------------
-                    // Convert numeric answer
-                    // -----------------------------------------
-
-                    if (
-                        typeof answer !== "number"
-                    ) {
+                    if (typeof answer !== "number") {
                         return null;
                     }
-
-                    // -----------------------------------------
-                    // Validate answer index
-                    // -----------------------------------------
 
                     if (
                         answer < 0 ||
-                        answer >=
-                            cleanedOptions.length
+                        answer >= cleanedOptions.length
                     ) {
                         return null;
                     }
-
-                    // -----------------------------------------
-                    // Return valid question
-                    // -----------------------------------------
 
                     return {
                         question:
                             String(questionText),
-
-                        options:
-                            cleanedOptions,
-
-                        answer: answer,
-
+                        options: cleanedOptions,
+                        answer,
                         explanation:
                             String(explanation),
                     };
                 }
             );
-
-            // =================================================
-            // REMOVE NULL QUESTIONS
-            // =================================================
 
             const cleanedQuestions: QuizQuestion[] =
                 normalizedQuestions.filter(
@@ -427,13 +386,7 @@ function Quiz() {
                         item !== null
                 );
 
-            // =================================================
-            // FINAL VALIDATION
-            // =================================================
-
-            if (
-                cleanedQuestions.length === 0
-            ) {
+            if (cleanedQuestions.length === 0) {
                 setError(
                     "The AI response was received, but no usable questions were found."
                 );
@@ -441,18 +394,14 @@ function Quiz() {
                 return;
             }
 
-            setQuestions(
-                cleanedQuestions
-            );
+            setQuestions(cleanedQuestions);
         } catch (err: any) {
             console.error(
                 "Quiz generation error:",
                 err
             );
 
-            if (
-                err?.response?.data?.error
-            ) {
+            if (err?.response?.data?.error) {
                 setError(
                     err.response.data.error
                 );
@@ -480,7 +429,7 @@ function Quiz() {
 
         if (
             selectedAnswer ===
-            question.answer
+            Number(question.answer)
         ) {
             setScore(
                 (previousScore) =>
@@ -504,10 +453,10 @@ function Quiz() {
         const percentage =
             totalQuestions > 0
                 ? Math.round(
-                      (finalScore /
-                          totalQuestions) *
-                          100
-                  )
+                    (finalScore /
+                        totalQuestions) *
+                        100
+                )
                 : 0;
 
         const newResult: QuizResult = {
@@ -524,9 +473,7 @@ function Quiz() {
                 ) || "[]"
             );
 
-        existingResults.push(
-            newResult
-        );
+        existingResults.push(newResult);
 
         localStorage.setItem(
             "quizResults",
@@ -563,13 +510,13 @@ function Quiz() {
 
             const currentAnswerCorrect =
                 selectedAnswer ===
-                currentQuestionData.answer;
+                Number(
+                    currentQuestionData.answer
+                );
 
             const finalScore =
                 score +
-                (currentAnswerCorrect
-                    ? 1
-                    : 0);
+                (currentAnswerCorrect ? 1 : 0);
 
             setScore(finalScore);
 
@@ -594,17 +541,6 @@ function Quiz() {
     };
 
     // =====================================================
-    // SELECTED DOCUMENT
-    // =====================================================
-
-    const selectedDocument =
-        documents.find(
-            (document) =>
-                document.document_id ===
-                selectedDocumentId
-        );
-
-    // =====================================================
     // COMPLETED SCREEN
     // =====================================================
 
@@ -612,15 +548,16 @@ function Quiz() {
         const percentage =
             questions.length > 0
                 ? Math.round(
-                      (score /
-                          questions.length) *
-                          100
-                  )
+                    (score /
+                        questions.length) *
+                        100
+                )
                 : 0;
 
         return (
             <div className="min-h-screen bg-gray-100 p-8">
                 <div className="max-w-3xl mx-auto bg-white rounded-2xl shadow-md p-10 text-center">
+
                     <div className="text-6xl mb-5">
                         🎉
                     </div>
@@ -630,8 +567,7 @@ function Quiz() {
                     </h1>
 
                     <div className="text-6xl font-bold text-gray-800 mb-4">
-                        {score} /{" "}
-                        {questions.length}
+                        {score} / {questions.length}
                     </div>
 
                     <p className="text-2xl font-semibold text-blue-600 mb-4">
@@ -642,9 +578,7 @@ function Quiz() {
                         <p className="text-gray-500 mb-4">
                             Based on:{" "}
                             <strong>
-                                {
-                                    selectedDocument.filename
-                                }
+                                {selectedDocument.filename}
                             </strong>
                         </p>
                     )}
@@ -694,6 +628,7 @@ function Quiz() {
                 {/* DOCUMENT SELECTOR */}
 
                 <div className="bg-white rounded-xl shadow-md p-6 mb-6">
+
                     <label className="block font-semibold text-gray-700 mb-2">
                         📚 Select Study Material
                     </label>
@@ -712,9 +647,9 @@ function Quiz() {
                             value={
                                 selectedDocumentId
                             }
-                            onChange={(e) =>
+                            onChange={(event) =>
                                 handleDocumentChange(
-                                    e.target.value
+                                    event.target.value
                                 )
                             }
                             className="w-full border border-gray-300 rounded-lg p-3 bg-white"
@@ -758,10 +693,9 @@ function Quiz() {
 
                 {questions.length === 0 && (
                     <div className="bg-white rounded-xl shadow-md p-8">
+
                         <button
-                            onClick={
-                                generateQuiz
-                            }
+                            onClick={generateQuiz}
                             disabled={
                                 loading ||
                                 !selectedDocumentId
@@ -775,8 +709,8 @@ function Quiz() {
 
                         {loading && (
                             <p className="mt-4 text-gray-500">
-                                AI is creating
-                                questions from:{" "}
+                                AI is creating questions
+                                from:{" "}
                                 <strong>
                                     {
                                         selectedDocument?.filename
@@ -835,9 +769,11 @@ function Quiz() {
                                         index
                                     ) => {
                                         const correctAnswer =
-                                            questions[
-                                                currentQuestion
-                                            ].answer;
+                                            Number(
+                                                questions[
+                                                    currentQuestion
+                                                ].answer
+                                            );
 
                                         const isCorrect =
                                             index ===
@@ -872,9 +808,7 @@ function Quiz() {
 
                                         return (
                                             <button
-                                                key={
-                                                    index
-                                                }
+                                                key={index}
                                                 onClick={() => {
                                                     if (
                                                         !submitted
@@ -893,8 +827,7 @@ function Quiz() {
                                             >
                                                 <span className="font-semibold mr-3">
                                                     {String.fromCharCode(
-                                                        65 +
-                                                            index
+                                                        65 + index
                                                     )}
                                                     .
                                                 </span>
@@ -952,8 +885,7 @@ function Quiz() {
                                     className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-lg font-semibold"
                                 >
                                     {currentQuestion ===
-                                    questions.length -
-                                        1
+                                    questions.length - 1
                                         ? "Finish Quiz"
                                         : "Next Question"}
                                 </button>

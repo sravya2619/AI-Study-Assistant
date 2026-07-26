@@ -67,15 +67,38 @@ app = FastAPI(
 
 
 # ============================================================
-# CORS
+# CORS CONFIGURATION
 # ============================================================
 
+# Local development URLs
 origins = [
     "http://localhost:5173",
     "http://localhost:5174",
     "http://127.0.0.1:5173",
     "http://127.0.0.1:5174"
 ]
+
+
+# ------------------------------------------------------------
+# Add deployed Vercel frontend URL
+# ------------------------------------------------------------
+
+frontend_url = os.getenv("FRONTEND_URL")
+
+if frontend_url:
+    origins.append(
+        frontend_url.rstrip("/")
+    )
+
+
+# ------------------------------------------------------------
+# Remove duplicate origins
+# ------------------------------------------------------------
+
+origins = list(
+    set(origins)
+)
+
 
 app.add_middleware(
     CORSMiddleware,
