@@ -2,8 +2,6 @@ import json
 import re
 import os
 from groq import Groq
-import json
-import re
 
 client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
@@ -14,7 +12,6 @@ MODEL_NAME = "llama-3.1-8b-instant"
 # MODEL CONFIGURATION
 # ============================================================
 
-MODEL_NAME = "llama3.2"
 
 # Maximum characters sent to the model for normal requests.
 # Keeping this controlled improves response speed.

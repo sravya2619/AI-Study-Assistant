@@ -1,51 +1,16 @@
 import faiss
 import numpy as np
-from datetime import datetime
-import faiss
-import numpy as np
 from sentence_transformers import SentenceTransformer
 from datetime import datetime
-
-# ============================================================
-# Lazy Loading Embedding Model
-# ============================================================
-
 model = None
-
-
 def get_model():
-    """
-    Load the embedding model only when needed.
-    This prevents Render from loading it during startup.
-    """
-    global model
-
-    if model is None:
-        print("Loading embedding model...")
-        model = SentenceTransformer("all-MiniLM-L6-v2")
-        print("Embedding model loaded.")
-
-    return model
-
-# ============================================================
-# DOCUMENT STORAGE
-# ============================================================
-
-# Each document gets its own FAISS index.
-#
-# Structure:
-#
-# document_id -> {
-#     "index": FAISS index,
-#     "chunks": [...],
-#     "filename": "...",
-#     "created_at": "..."
-# }
-#
+ global model
+ if model is None:
+     print("Loading embedding model...")
+     model = SentenceTransformer("all-MiniLM-L6-v2")
+     print("Embedding model loaded.")
+ return model
 document_stores = {}
-
-
-# Currently selected document
 current_document_id = None
 
 
