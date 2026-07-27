@@ -1,21 +1,31 @@
 import faiss
 import numpy as np
+from datetime import datetime
+import faiss
+import numpy as np
 from sentence_transformers import SentenceTransformer
 from datetime import datetime
 
-
 # ============================================================
-# LOAD EMBEDDING MODEL ONCE
+# Lazy Loading Embedding Model
 # ============================================================
 
-print("Loading embedding model...")
+model = None
 
-model = SentenceTransformer(
-    "all-MiniLM-L6-v2"
-)
 
-print("Embedding model loaded.")
+def get_model():
+    """
+    Load the embedding model only when needed.
+    This prevents Render from loading it during startup.
+    """
+    global model
 
+    if model is None:
+        print("Loading embedding model...")
+        model = SentenceTransformer("all-MiniLM-L6-v2")
+        print("Embedding model loaded.")
+
+    return model
 
 # ============================================================
 # DOCUMENT STORAGE
@@ -102,22 +112,14 @@ def create_vector_store(
     # BATCH EMBEDDING
     # ========================================================
 
-    embeddings = model.encode(
-
-        cleaned_chunks,
-
-        batch_size=64,
-
-        show_progress_bar=True,
-
-        convert_to_numpy=True,
-
-        normalize_embeddings=True,
-
-        # Prevent unnecessary tensor creation
-        convert_to_tensor=False
-    )
-
+    embeddings = get_model().encode(
+    cleaned_chunks,
+    batch_size=32,
+    show_progress_bar=False,
+    convert_to_numpy=True,
+    normalize_embeddings=True,
+    convert_to_tensor=False
+)
 
     # --------------------------------------------------------
     # Convert to FAISS-compatible format
@@ -279,16 +281,12 @@ def search_vector_store(
     # EMBED USER QUESTION
     # ========================================================
 
-    query_embedding = model.encode(
-
-        [query.strip()],
-
-        convert_to_numpy=True,
-
-        normalize_embeddings=True,
-
-        convert_to_tensor=False
-    )
+    query_embedding = get_model().encode(
+    [query.strip()],
+    convert_to_numpy=True,
+    normalize_embeddings=True,
+    convert_to_tensor=False
+)
 
 
     query_embedding = np.asarray(
