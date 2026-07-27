@@ -1,17 +1,46 @@
 import faiss
 import numpy as np
+
 from sentence_transformers import SentenceTransformer
 from datetime import datetime
+
+
+# ============================================================
+# EMBEDDING MODEL
+# ============================================================
+
 model = None
+
+
 def get_model():
- global model
- if model is None:
-     print("Loading embedding model...")
-     model = SentenceTransformer("all-MiniLM-L6-v2")
-     print("Embedding model loaded.")
- return model
+
+    global model
+
+    if model is None:
+
+        print("Loading embedding model...")
+
+        model = SentenceTransformer(
+            "all-MiniLM-L6-v2"
+        )
+
+        print("Embedding model loaded.")
+
+    return model
+
+
+# ============================================================
+# DOCUMENT STORAGE
+# ============================================================
+
 document_stores = {}
-current_document_id = None
+
+
+# ============================================================
+# CURRENT DOCUMENT PER USER
+# ============================================================
+
+current_document_ids = {}
 
 
 # ============================================================
@@ -21,12 +50,20 @@ current_document_id = None
 def create_vector_store(
     chunks,
     document_id=None,
-    filename="study_notes.pdf"
+    filename="study_notes.pdf",
+    owner=None
 ):
 
     global document_stores
-    global current_document_id
+    global current_document_ids
 
+    # --------------------------------------------------------
+    # Validate owner
+    # --------------------------------------------------------
+
+    if not owner:
+
+        return 0
 
     # --------------------------------------------------------
     # Validate chunks
@@ -36,8 +73,9 @@ def create_vector_store(
 
         return 0
 
-
+    # --------------------------------------------------------
     # Remove empty chunks
+    # --------------------------------------------------------
 
     cleaned_chunks = [
 
@@ -50,11 +88,9 @@ def create_vector_store(
 
     ]
 
-
     if not cleaned_chunks:
 
         return 0
-
 
     # --------------------------------------------------------
     # Create document ID if not provided
@@ -66,44 +102,38 @@ def create_vector_store(
             f"document_{len(document_stores) + 1}"
         )
 
-
     print(
         f"Creating embeddings for "
         f"{len(cleaned_chunks)} chunks..."
     )
-
 
     # ========================================================
     # BATCH EMBEDDING
     # ========================================================
 
     embeddings = get_model().encode(
-    cleaned_chunks,
-    batch_size=32,
-    show_progress_bar=False,
-    convert_to_numpy=True,
-    normalize_embeddings=True,
-    convert_to_tensor=False
-)
+        cleaned_chunks,
+        batch_size=32,
+        show_progress_bar=False,
+        convert_to_numpy=True,
+        normalize_embeddings=True,
+        convert_to_tensor=False
+    )
 
     # --------------------------------------------------------
     # Convert to FAISS-compatible format
     # --------------------------------------------------------
 
     embeddings = np.asarray(
-
         embeddings,
-
         dtype="float32"
     )
-
 
     # --------------------------------------------------------
     # Get embedding dimension
     # --------------------------------------------------------
 
     dimension = embeddings.shape[1]
-
 
     # ========================================================
     # CREATE FAISS INDEX
@@ -113,21 +143,15 @@ def create_vector_store(
         dimension
     )
 
-
-    # Add embeddings
-
     index.add(
         embeddings
     )
-
 
     # ========================================================
     # SAVE DOCUMENT STORE
     # ========================================================
 
-    document_stores[
-        document_id
-    ] = {
+    document_stores[document_id] = {
 
         "index":
             index,
@@ -142,18 +166,22 @@ def create_vector_store(
             datetime.now().isoformat(),
 
         "chunk_count":
-            len(cleaned_chunks)
+            len(cleaned_chunks),
+
+        "owner":
+            owner
 
     }
 
-
+    # --------------------------------------------------------
     # Automatically select newly uploaded document
+    # for this user only
+    # --------------------------------------------------------
 
-    current_document_id = document_id
-
+    current_document_ids[owner] = document_id
 
     print(
-        f"FAISS index created successfully."
+        "FAISS index created successfully."
     )
 
     print(
@@ -161,11 +189,40 @@ def create_vector_store(
     )
 
     print(
+        f"Owner: {owner}"
+    )
+
+    print(
         f"Chunks: {len(cleaned_chunks)}"
     )
 
-
     return len(cleaned_chunks)
+
+
+# ============================================================
+# CHECK DOCUMENT OWNERSHIP
+# ============================================================
+
+def is_document_owner(
+    document_id,
+    owner
+):
+
+    if not document_id or not owner:
+
+        return False
+
+    store = document_stores.get(
+        document_id
+    )
+
+    if store is None:
+
+        return False
+
+    return (
+        store.get("owner") == owner
+    )
 
 
 # ============================================================
@@ -173,17 +230,11 @@ def create_vector_store(
 # ============================================================
 
 def search_vector_store(
-
     query,
-
     k=5,
-
-    document_id=None
-
+    document_id=None,
+    owner=None
 ):
-
-    global current_document_id
-
 
     # --------------------------------------------------------
     # Validate query
@@ -193,20 +244,30 @@ def search_vector_store(
 
         return []
 
-
     # --------------------------------------------------------
-    # Use currently selected document
+    # Use current document for this user
     # --------------------------------------------------------
 
-    if document_id is None:
+    if document_id is None and owner:
 
-        document_id = current_document_id
-
+        document_id = (
+            current_document_ids.get(owner)
+        )
 
     if document_id is None:
 
         return []
 
+    # --------------------------------------------------------
+    # Security check
+    # --------------------------------------------------------
+
+    if not is_document_owner(
+        document_id,
+        owner
+    ):
+
+        return []
 
     # --------------------------------------------------------
     # Find document store
@@ -216,21 +277,17 @@ def search_vector_store(
         document_id
     )
 
-
     if store is None:
 
         return []
-
 
     index = store["index"]
 
     chunks = store["chunks"]
 
-
     if index is None or not chunks:
 
         return []
-
 
     # --------------------------------------------------------
     # Don't request more results than available
@@ -241,38 +298,30 @@ def search_vector_store(
         len(chunks)
     )
 
-
     # ========================================================
     # EMBED USER QUESTION
     # ========================================================
 
     query_embedding = get_model().encode(
-    [query.strip()],
-    convert_to_numpy=True,
-    normalize_embeddings=True,
-    convert_to_tensor=False
-)
-
-
-    query_embedding = np.asarray(
-
-        query_embedding,
-
-        dtype="float32"
+        [query.strip()],
+        convert_to_numpy=True,
+        normalize_embeddings=True,
+        convert_to_tensor=False
     )
 
+    query_embedding = np.asarray(
+        query_embedding,
+        dtype="float32"
+    )
 
     # ========================================================
     # SEARCH FAISS
     # ========================================================
 
     distances, indices = index.search(
-
         query_embedding,
-
         k
     )
-
 
     # ========================================================
     # BUILD RESULTS
@@ -280,17 +329,13 @@ def search_vector_store(
 
     results = []
 
-
     for position, chunk_index in enumerate(
-
         indices[0]
-
     ):
 
         if chunk_index == -1:
 
             continue
-
 
         results.append({
 
@@ -304,7 +349,6 @@ def search_vector_store(
 
         })
 
-
     return results
 
 
@@ -313,45 +357,65 @@ def search_vector_store(
 # ============================================================
 
 def get_all_chunks(
-    document_id=None
+    document_id=None,
+    owner=None
 ):
 
-    global current_document_id
+    # --------------------------------------------------------
+    # Use current document for this user
+    # --------------------------------------------------------
 
+    if document_id is None and owner:
 
-    if document_id is None:
-
-        document_id = current_document_id
-
+        document_id = (
+            current_document_ids.get(owner)
+        )
 
     if document_id is None:
 
         return []
 
+    # --------------------------------------------------------
+    # Security check
+    # --------------------------------------------------------
+
+    if not is_document_owner(
+        document_id,
+        owner
+    ):
+
+        return []
 
     store = document_stores.get(
         document_id
     )
 
-
     if store is None:
 
         return []
-
 
     return store["chunks"]
 
 
 # ============================================================
-# GET ALL DOCUMENTS
+# GET ALL DOCUMENTS FOR USER
 # ============================================================
 
-def get_all_documents():
+def get_all_documents(
+    owner
+):
 
     documents = []
 
-
     for document_id, store in document_stores.items():
+
+        # ----------------------------------------------------
+        # SECURITY FILTER
+        # ----------------------------------------------------
+
+        if store.get("owner") != owner:
+
+            continue
 
         documents.append({
 
@@ -369,11 +433,9 @@ def get_all_documents():
 
         })
 
-
     # Newest first
 
     documents.reverse()
-
 
     return documents
 
@@ -383,18 +445,27 @@ def get_all_documents():
 # ============================================================
 
 def get_document(
-    document_id
+    document_id,
+    owner=None
 ):
 
     store = document_stores.get(
         document_id
     )
 
-
     if store is None:
 
         return None
 
+    # --------------------------------------------------------
+    # SECURITY CHECK
+    # --------------------------------------------------------
+
+    if owner is not None:
+
+        if store.get("owner") != owner:
+
+            return None
 
     return {
 
@@ -414,42 +485,44 @@ def get_document(
 
 
 # ============================================================
-# SET CURRENT DOCUMENT
+# SET CURRENT DOCUMENT FOR USER
 # ============================================================
 
 def set_current_document(
-    document_id
+    document_id,
+    owner
 ):
 
-    global current_document_id
-
-
-    if document_id not in document_stores:
+    if not is_document_owner(
+        document_id,
+        owner
+    ):
 
         return False
 
-
-    current_document_id = document_id
-
-
-    print(
-        f"Current document changed to: "
-        f"{document_id}"
+    current_document_ids[owner] = (
+        document_id
     )
 
+    print(
+        f"Current document changed for "
+        f"{owner}: {document_id}"
+    )
 
     return True
 
 
 # ============================================================
-# GET CURRENT DOCUMENT
+# GET CURRENT DOCUMENT FOR USER
 # ============================================================
 
-def get_current_document():
+def get_current_document(
+    owner
+):
 
-    global current_document_id
-
-    return current_document_id
+    return current_document_ids.get(
+        owner
+    )
 
 
 # ============================================================
@@ -457,45 +530,65 @@ def get_current_document():
 # ============================================================
 
 def delete_document(
-    document_id
+    document_id,
+    owner
 ):
 
-    global current_document_id
+    global document_stores
+    global current_document_ids
 
+    # --------------------------------------------------------
+    # Security check
+    # --------------------------------------------------------
 
-    if document_id not in document_stores:
+    if not is_document_owner(
+        document_id,
+        owner
+    ):
 
         return False
 
-
+    # --------------------------------------------------------
     # Delete document
+    # --------------------------------------------------------
 
     del document_stores[
         document_id
     ]
 
-
     # --------------------------------------------------------
     # If deleted document was selected,
-    # select another document automatically.
+    # select another document belonging
+    # to the same user.
     # --------------------------------------------------------
 
-    if current_document_id == document_id:
+    if (
+        current_document_ids.get(owner)
+        == document_id
+    ):
 
-        current_document_id = None
+        current_document_ids.pop(
+            owner,
+            None
+        )
 
+        # Find another document owned
+        # by this user
 
-        if document_stores:
+        for other_id, store in document_stores.items():
 
-            current_document_id = next(
-                iter(document_stores)
-            )
+            if store.get("owner") == owner:
 
+                current_document_ids[owner] = (
+                    other_id
+                )
+
+                break
 
     print(
-        f"Deleted document: {document_id}"
+        f"Deleted document: "
+        f"{document_id}"
     )
-
 
     return True
 
@@ -507,13 +600,11 @@ def delete_document(
 def clear_vector_store():
 
     global document_stores
-    global current_document_id
-
+    global current_document_ids
 
     document_stores = {}
 
-    current_document_id = None
-
+    current_document_ids = {}
 
     print(
         "All vector stores cleared."

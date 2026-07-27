@@ -70,7 +70,6 @@ app = FastAPI(
 # CORS CONFIGURATION
 # ============================================================
 
-# Local development URLs
 origins = [
     "http://localhost:5173",
     "http://localhost:5174",
@@ -79,10 +78,6 @@ origins = [
 ]
 
 
-# ------------------------------------------------------------
-# Add deployed Vercel frontend URL
-# ------------------------------------------------------------
-
 frontend_url = os.getenv("FRONTEND_URL")
 
 if frontend_url:
@@ -90,10 +85,6 @@ if frontend_url:
         frontend_url.rstrip("/")
     )
 
-
-# ------------------------------------------------------------
-# Remove duplicate origins
-# ------------------------------------------------------------
 
 origins = list(
     set(origins)
@@ -229,10 +220,14 @@ def login(request: LoginRequest):
 # ============================================================
 # UPLOAD PDF
 # ============================================================
+# ============================================================
+# UPLOAD PDF
+# ============================================================
 
 @app.post("/upload")
 async def upload_pdf(
-    file: UploadFile = File(...)
+    file: UploadFile = File(...),
+    current_user: str = Depends(get_current_user)
 ):
 
     # --------------------------------------------------------
@@ -245,7 +240,6 @@ async def upload_pdf(
             "error": "No filename provided."
         }
 
-
     # --------------------------------------------------------
     # Check PDF
     # --------------------------------------------------------
@@ -256,7 +250,6 @@ async def upload_pdf(
             "error": "Only PDF files are allowed."
         }
 
-
     # --------------------------------------------------------
     # Create uploads directory
     # --------------------------------------------------------
@@ -266,7 +259,6 @@ async def upload_pdf(
         exist_ok=True
     )
 
-
     # --------------------------------------------------------
     # Generate unique document ID
     # --------------------------------------------------------
@@ -274,7 +266,6 @@ async def upload_pdf(
     document_id = str(
         uuid.uuid4()
     )
-
 
     # --------------------------------------------------------
     # Make safe filename
@@ -286,7 +277,6 @@ async def upload_pdf(
         original_filename
     )
 
-
     # --------------------------------------------------------
     # Add document ID to filename
     # --------------------------------------------------------
@@ -295,12 +285,10 @@ async def upload_pdf(
         f"{document_id}_{safe_filename}"
     )
 
-
     file_path = os.path.join(
         "uploads",
         saved_filename
     )
-
 
     # --------------------------------------------------------
     # Read uploaded file
@@ -308,13 +296,11 @@ async def upload_pdf(
 
     file_content = await file.read()
 
-
     if not file_content:
 
         return {
             "error": "Uploaded file is empty."
         }
-
 
     # --------------------------------------------------------
     # Save PDF
@@ -326,7 +312,6 @@ async def upload_pdf(
     ) as f:
 
         f.write(file_content)
-
 
     # --------------------------------------------------------
     # Extract text
@@ -345,7 +330,6 @@ async def upload_pdf(
             "details": str(e)
         }
 
-
     # --------------------------------------------------------
     # Clean text
     # --------------------------------------------------------
@@ -354,13 +338,11 @@ async def upload_pdf(
         text
     )
 
-
     if not text.strip():
 
         return {
             "error": "Could not extract readable text from this PDF."
         }
-
 
     # --------------------------------------------------------
     # Save complete text
@@ -370,7 +352,6 @@ async def upload_pdf(
         document_id
     ] = text
 
-
     # --------------------------------------------------------
     # Split into chunks
     # --------------------------------------------------------
@@ -379,13 +360,11 @@ async def upload_pdf(
         text
     )
 
-
     if not chunks:
 
         return {
             "error": "Could not create chunks from this PDF."
         }
-
 
     # --------------------------------------------------------
     # Create FAISS vector store
@@ -394,9 +373,9 @@ async def upload_pdf(
     total_chunks = create_vector_store(
         chunks,
         document_id=document_id,
-        filename=safe_filename
+        filename=safe_filename,
+        owner=current_user
     )
-
 
     # --------------------------------------------------------
     # Return result
@@ -416,13 +395,19 @@ async def upload_pdf(
 # ============================================================
 
 @app.get("/documents")
-def documents():
+def documents(
+    current_user: str = Depends(get_current_user)
+):
 
-    all_documents = get_all_documents()
+    all_documents = get_all_documents(
+        current_user
+    )
 
     return {
         "documents": all_documents,
-        "current_document_id": get_current_document()
+        "current_document_id": get_current_document(
+            current_user
+        )
     }
 
 
@@ -431,9 +416,13 @@ def documents():
 # ============================================================
 
 @app.get("/documents/current")
-def current_document():
+def current_document(
+    current_user: str = Depends(get_current_user)
+):
 
-    current_id = get_current_document()
+    current_id = get_current_document(
+        current_user
+    )
 
     if current_id is None:
 
@@ -441,11 +430,16 @@ def current_document():
             "document": None
         }
 
-
     document = get_document(
-        current_id
+        current_id,
+        current_user
     )
 
+    if document is None:
+
+        return {
+            "document": None
+        }
 
     return {
         "document": document
@@ -458,13 +452,14 @@ def current_document():
 
 @app.post("/documents/select")
 def select_document(
-    request: DocumentRequest
+    request: DocumentRequest,
+    current_user: str = Depends(get_current_user)
 ):
 
     success = set_current_document(
-        request.document_id
+        request.document_id,
+        current_user
     )
-
 
     if not success:
 
@@ -472,11 +467,16 @@ def select_document(
             "error": "Document not found."
         }
 
-
     document = get_document(
-        request.document_id
+        request.document_id,
+        current_user
     )
 
+    if document is None:
+
+        return {
+            "error": "Document not found."
+        }
 
     return {
         "message": "Document selected successfully.",
@@ -490,13 +490,14 @@ def select_document(
 
 @app.delete("/documents/{document_id}")
 def remove_document(
-    document_id: str
+    document_id: str,
+    current_user: str = Depends(get_current_user)
 ):
 
     document = get_document(
-        document_id
+        document_id,
+        current_user
     )
-
 
     if document is None:
 
@@ -504,22 +505,20 @@ def remove_document(
             "error": "Document not found."
         }
 
-
     # --------------------------------------------------------
     # Remove from FAISS memory
     # --------------------------------------------------------
 
     success = delete_document(
-        document_id
+        document_id,
+        current_user
     )
-
 
     if not success:
 
         return {
             "error": "Could not delete document."
         }
-
 
     # --------------------------------------------------------
     # Remove text from memory
@@ -531,7 +530,6 @@ def remove_document(
             document_id
         ]
 
-
     # --------------------------------------------------------
     # Try to remove physical PDF
     # --------------------------------------------------------
@@ -541,22 +539,18 @@ def remove_document(
         ""
     )
 
-
     if filename:
 
         uploads_directory = "uploads"
-
 
         possible_filename = (
             f"{document_id}_{filename}"
         )
 
-
         file_path = os.path.join(
             uploads_directory,
             possible_filename
         )
-
 
         if os.path.exists(file_path):
 
@@ -572,13 +566,15 @@ def remove_document(
                     f"Could not delete file: {e}"
                 )
 
-
     return {
         "message": "Document deleted successfully.",
         "document_id": document_id
     }
 
 
+# ============================================================
+# CHAT / RAG
+# ============================================================
 # ============================================================
 # CHAT / RAG
 # ============================================================
@@ -589,30 +585,58 @@ def chat(
     current_user: str = Depends(get_current_user)
 ):
 
+    # --------------------------------------------------------
+    # Validate question
+    # --------------------------------------------------------
+
     if not request.question.strip():
 
         return {
             "answer": "Please enter a question."
         }
 
+    # --------------------------------------------------------
+    # Determine selected document
+    # --------------------------------------------------------
+
+    document_id = request.document_id
+
+    if document_id is None:
+
+        document_id = get_current_document(
+            current_user
+        )
+
+    # --------------------------------------------------------
+    # Check document
+    # --------------------------------------------------------
+
+    if document_id is None:
+
+        return {
+            "answer": "Please upload and select a PDF first."
+        }
 
     # --------------------------------------------------------
     # Search selected document
     # --------------------------------------------------------
 
     results = search_vector_store(
-        request.question,
+        query=request.question,
         k=5,
-        document_id=request.document_id
+        document_id=document_id,
+        owner=current_user
     )
 
+    # --------------------------------------------------------
+    # Check search results
+    # --------------------------------------------------------
 
     if not results:
 
         return {
             "answer": "Please upload and select a PDF first."
         }
-
 
     # --------------------------------------------------------
     # Build context
@@ -626,28 +650,37 @@ def chat(
             result["text"]
         )
 
-
     context = "\n\n---\n\n".join(
         context_parts
     )
-
 
     # --------------------------------------------------------
     # Ask AI
     # --------------------------------------------------------
 
-    answer = answer_question(
-        request.question,
-        context
-    )
+    try:
 
+        answer = answer_question(
+            request.question,
+            context
+        )
+
+    except Exception as e:
+
+        return {
+            "answer": "Failed to generate an answer.",
+            "details": str(e)
+        }
+
+    # --------------------------------------------------------
+    # Return result
+    # --------------------------------------------------------
 
     return {
         "answer": answer,
-        "document_id": (
-            request.document_id
-            or get_current_document()
-        ),
+
+        "document_id": document_id,
+
         "sources": [
             {
                 "score": result["score"]
@@ -666,43 +699,42 @@ def build_controlled_context(
     max_chunks=12
 ):
     """
-    Select a limited number of chunks spread across the document.
-    This prevents sending the entire PDF to the LLM.
+    Select a limited number of chunks spread across
+    the document.
     """
 
     if not chunks:
 
         return ""
 
-
+    # --------------------------------------------------------
     # If document is already small, use everything
+    # --------------------------------------------------------
 
     if len(chunks) <= max_chunks:
 
         selected_chunks = chunks
 
-
     else:
 
+        # ----------------------------------------------------
         # Select chunks evenly throughout the document
+        # ----------------------------------------------------
 
         step = (
             (len(chunks) - 1)
             / (max_chunks - 1)
         )
 
-
         indexes = [
             round(i * step)
             for i in range(max_chunks)
         ]
 
-
         selected_chunks = [
             chunks[index]
             for index in indexes
         ]
-
 
     return "\n\n".join(
         selected_chunks
@@ -716,6 +748,7 @@ def build_controlled_context(
 def build_retrieved_context(
     queries,
     document_id,
+    owner,
     max_chunks=12,
     k_each=5
 ):
@@ -728,30 +761,30 @@ def build_retrieved_context(
 
     seen = set()
 
+    # --------------------------------------------------------
+    # Search using each query
+    # --------------------------------------------------------
 
     for query in queries:
 
         results = search_vector_store(
             query=query,
             k=k_each,
-            document_id=document_id
+            document_id=document_id,
+            owner=owner
         )
-
 
         for result in results:
 
             text = result["text"].strip()
 
-
             if not text:
 
                 continue
 
-
             if text in seen:
 
                 continue
-
 
             seen.add(text)
 
@@ -759,13 +792,11 @@ def build_retrieved_context(
                 text
             )
 
-
             if len(selected_chunks) >= max_chunks:
 
                 return "\n\n".join(
                     selected_chunks
                 )
-
 
     return "\n\n".join(
         selected_chunks
@@ -778,7 +809,8 @@ def build_retrieved_context(
 
 @app.post("/summarize")
 def summarize(
-    request: DocumentRequest | None = None
+    request: DocumentRequest | None = None,
+    current_user: str = Depends(get_current_user)
 ):
 
     # --------------------------------------------------------
@@ -787,16 +819,15 @@ def summarize(
 
     document_id = None
 
-
     if request is not None:
 
         document_id = request.document_id
 
-
     if document_id is None:
 
-        document_id = get_current_document()
-
+        document_id = get_current_document(
+            current_user
+        )
 
     # --------------------------------------------------------
     # Check document
@@ -808,15 +839,14 @@ def summarize(
             "error": "Please upload a PDF first."
         }
 
-
     # --------------------------------------------------------
     # Get chunks
     # --------------------------------------------------------
 
     chunks = get_all_chunks(
-        document_id
+        document_id,
+        current_user
     )
-
 
     if not chunks:
 
@@ -824,9 +854,8 @@ def summarize(
             "error": "Document chunks are not available."
         }
 
-
     # --------------------------------------------------------
-    # Controlled context
+    # Build retrieved context
     # --------------------------------------------------------
 
     context = build_retrieved_context(
@@ -837,10 +866,20 @@ def summarize(
             "important conclusions and findings"
         ],
         document_id=document_id,
+        owner=current_user,
         max_chunks=15,
         k_each=5
     )
 
+    # --------------------------------------------------------
+    # Check context
+    # --------------------------------------------------------
+
+    if not context.strip():
+
+        return {
+            "error": "Could not retrieve relevant content from the document."
+        }
 
     # --------------------------------------------------------
     # Generate summary
@@ -852,12 +891,10 @@ def summarize(
             context
         )
 
-
         return {
             "summary": summary,
             "document_id": document_id
         }
-
 
     except Exception as e:
 
@@ -871,9 +908,14 @@ def summarize(
 # QUIZ
 # ============================================================
 
+# ============================================================
+# QUIZ
+# ============================================================
+
 @app.post("/quiz")
 def quiz(
-    request: DocumentRequest | None = None
+    request: DocumentRequest | None = None,
+    current_user: str = Depends(get_current_user)
 ):
 
     # --------------------------------------------------------
@@ -882,25 +924,34 @@ def quiz(
 
     document_id = None
 
-
     if request is not None:
 
         document_id = request.document_id
 
+    if document_id is None:
+
+        document_id = get_current_document(
+            current_user
+        )
+
+    # --------------------------------------------------------
+    # Check document
+    # --------------------------------------------------------
 
     if document_id is None:
 
-        document_id = get_current_document()
-
+        return {
+            "error": "Please upload and select a PDF first."
+        }
 
     # --------------------------------------------------------
     # Get chunks
     # --------------------------------------------------------
 
     chunks = get_all_chunks(
-        document_id
+        document_id,
+        current_user
     )
-
 
     if not chunks:
 
@@ -908,9 +959,8 @@ def quiz(
             "error": "Please upload and select a PDF first."
         }
 
-
     # --------------------------------------------------------
-    # Controlled context
+    # Build retrieved context
     # --------------------------------------------------------
 
     context = build_retrieved_context(
@@ -921,10 +971,20 @@ def quiz(
             "important examples and applications"
         ],
         document_id=document_id,
+        owner=current_user,
         max_chunks=10,
         k_each=5
     )
 
+    # --------------------------------------------------------
+    # Check context
+    # --------------------------------------------------------
+
+    if not context.strip():
+
+        return {
+            "error": "Could not retrieve relevant content from the document."
+        }
 
     # --------------------------------------------------------
     # Generate quiz
@@ -936,12 +996,10 @@ def quiz(
             context
         )
 
-
         return {
             "quiz": quiz_data,
             "document_id": document_id
         }
-
 
     except Exception as e:
 
@@ -957,7 +1015,8 @@ def quiz(
 
 @app.post("/flashcards")
 def flashcards(
-    request: DocumentRequest | None = None
+    request: DocumentRequest | None = None,
+    current_user: str = Depends(get_current_user)
 ):
 
     # --------------------------------------------------------
@@ -966,25 +1025,34 @@ def flashcards(
 
     document_id = None
 
-
     if request is not None:
 
         document_id = request.document_id
 
+    if document_id is None:
+
+        document_id = get_current_document(
+            current_user
+        )
+
+    # --------------------------------------------------------
+    # Check document
+    # --------------------------------------------------------
 
     if document_id is None:
 
-        document_id = get_current_document()
-
+        return {
+            "error": "Please upload and select a PDF first."
+        }
 
     # --------------------------------------------------------
     # Get chunks
     # --------------------------------------------------------
 
     chunks = get_all_chunks(
-        document_id
+        document_id,
+        current_user
     )
-
 
     if not chunks:
 
@@ -992,9 +1060,8 @@ def flashcards(
             "error": "Please upload and select a PDF first."
         }
 
-
     # --------------------------------------------------------
-    # Controlled context
+    # Build retrieved context
     # --------------------------------------------------------
 
     context = build_retrieved_context(
@@ -1005,10 +1072,20 @@ def flashcards(
             "important formulas principles and facts"
         ],
         document_id=document_id,
+        owner=current_user,
         max_chunks=10,
         k_each=5
     )
 
+    # --------------------------------------------------------
+    # Check context
+    # --------------------------------------------------------
+
+    if not context.strip():
+
+        return {
+            "error": "Could not retrieve relevant content from the document."
+        }
 
     # --------------------------------------------------------
     # Generate flashcards
@@ -1020,12 +1097,10 @@ def flashcards(
             context
         )
 
-
         return {
             "flashcards": flashcard_data,
             "document_id": document_id
         }
-
 
     except Exception as e:
 
