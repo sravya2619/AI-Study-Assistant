@@ -1,35 +1,16 @@
-# ============================================================
-# LIGHTWEIGHT VECTOR / RETRIEVAL STORE
-# ============================================================
-#
-# This version does NOT use:
-#   - SentenceTransformer
-#   - PyTorch
-#   - FAISS
-#
-# Instead it uses:
-#   - scikit-learn TF-IDF
-#
-# This greatly reduces RAM usage and is suitable for
-# Render Free's limited memory environment.
-# ============================================================
-
 from datetime import datetime
-
+import numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
 
 
 # ============================================================
-# STORAGE
+# DOCUMENT STORAGE
 # ============================================================
 
 # Structure:
 #
 # document_stores = {
-#
-#     "username1": {
-#
+#     "user1": {
 #         "document_id_1": {
 #             "vectorizer": ...,
 #             "matrix": ...,
@@ -38,44 +19,28 @@ from sklearn.metrics.pairwise import cosine_similarity
 #             "created_at": "...",
 #             "chunk_count": ...
 #         }
-#
-#     },
-#
-#     "username2": {
-#         ...
 #     }
 # }
-#
-# This keeps each user's documents separate.
 
 document_stores = {}
 
 # Currently selected document for each user
-
 current_document_ids = {}
 
 
 # ============================================================
-# INTERNAL HELPERS
+# GET USER STORE
 # ============================================================
 
-def _get_owner_key(owner=None):
+def get_user_store(owner):
 
-    if owner is None:
-        return "__default_user__"
+    if not owner:
+        return None
 
-    return owner
+    if owner not in document_stores:
+        document_stores[owner] = {}
 
-
-def _get_user_store(owner=None):
-
-    owner_key = _get_owner_key(owner)
-
-    if owner_key not in document_stores:
-
-        document_stores[owner_key] = {}
-
-    return document_stores[owner_key]
+    return document_stores[owner]
 
 
 # ============================================================
@@ -89,135 +54,94 @@ def create_vector_store(
     owner=None
 ):
 
-    owner_key = _get_owner_key(owner)
-
-    user_store = _get_user_store(owner)
-
-    # --------------------------------------------------------
-    # Validate chunks
-    # --------------------------------------------------------
+    if not owner:
+        return 0
 
     if not chunks:
         return 0
 
     # --------------------------------------------------------
-    # Remove empty chunks
+    # Clean chunks
     # --------------------------------------------------------
 
     cleaned_chunks = [
-
         chunk.strip()
-
         for chunk in chunks
-
-        if chunk
-        and chunk.strip()
-
+        if chunk and chunk.strip()
     ]
 
     if not cleaned_chunks:
         return 0
 
     # --------------------------------------------------------
-    # Create document ID if needed
+    # Generate document ID
     # --------------------------------------------------------
 
     if document_id is None:
+
+        user_store = get_user_store(owner)
 
         document_id = (
             f"document_{len(user_store) + 1}"
         )
 
-    print(
-        f"Creating lightweight TF-IDF index "
-        f"for {len(cleaned_chunks)} chunks..."
-    )
+    # --------------------------------------------------------
+    # Create TF-IDF vectorizer
+    # --------------------------------------------------------
 
-    # ========================================================
-    # CREATE TF-IDF VECTORIZER
-    # ========================================================
+    print(
+        f"Creating TF-IDF vectors for "
+        f"{len(cleaned_chunks)} chunks..."
+    )
 
     vectorizer = TfidfVectorizer(
+    max_features=5000,
+    stop_words="english",
+    ngram_range=(1, 2),
+    sublinear_tf=True,
+    dtype=np.float32
+)
+    # --------------------------------------------------------
+    # Convert chunks into sparse TF-IDF matrix
+    # --------------------------------------------------------
 
-        lowercase=True,
-
-        stop_words="english",
-
-        # Avoid extremely large vocabulary
-
-        max_features=20000,
-
-        # Ignore terms appearing in only one chunk
-
-        min_df=1,
-
-        # Ignore extremely common terms
-
-        max_df=0.95,
-
-        ngram_range=(1, 2)
-
+    matrix = vectorizer.fit_transform(
+        cleaned_chunks
     )
 
-    # ========================================================
-    # CREATE MATRIX
-    # ========================================================
+    # --------------------------------------------------------
+    # Save document
+    # --------------------------------------------------------
 
-    try:
-
-        matrix = vectorizer.fit_transform(
-            cleaned_chunks
-        )
-
-    except ValueError:
-
-        # This can happen if a PDF contains very little
-        # usable text.
-
-        print(
-            "TF-IDF could not create a vocabulary."
-        )
-
-        return 0
-
-    # ========================================================
-    # SAVE DOCUMENT STORE
-    # ========================================================
+    user_store = get_user_store(owner)
 
     user_store[document_id] = {
 
-        "vectorizer":
-            vectorizer,
+        "vectorizer": vectorizer,
 
-        "matrix":
-            matrix,
+        "matrix": matrix,
 
-        "chunks":
-            cleaned_chunks,
+        "chunks": cleaned_chunks,
 
-        "filename":
-            filename,
+        "filename": filename,
 
         "created_at":
             datetime.now().isoformat(),
 
         "chunk_count":
             len(cleaned_chunks)
-
     }
 
     # Automatically select newly uploaded document
 
-    current_document_ids[
-        owner_key
-    ] = document_id
+    current_document_ids[owner] = document_id
 
     print(
-        "Lightweight TF-IDF index created successfully."
+        "TF-IDF vector store created successfully."
     )
 
     print(
-        f"Owner: {owner_key}"
+        f"Owner: {owner}"
     )
 
     print(
@@ -247,36 +171,37 @@ def search_vector_store(
     owner=None
 ):
 
-    owner_key = _get_owner_key(owner)
-
-    # --------------------------------------------------------
-    # Validate query
-    # --------------------------------------------------------
+    if not owner:
+        return []
 
     if not query or not query.strip():
         return []
 
     # --------------------------------------------------------
-    # Use currently selected document
+    # Get user's documents
+    # --------------------------------------------------------
+
+    user_store = get_user_store(owner)
+
+    if not user_store:
+        return []
+
+    # --------------------------------------------------------
+    # Use selected document
     # --------------------------------------------------------
 
     if document_id is None:
 
         document_id = current_document_ids.get(
-            owner_key
+            owner
         )
 
     if document_id is None:
         return []
 
     # --------------------------------------------------------
-    # Find document
+    # Get document
     # --------------------------------------------------------
-
-    user_store = document_stores.get(
-        owner_key,
-        {}
-    )
 
     store = user_store.get(
         document_id
@@ -285,14 +210,8 @@ def search_vector_store(
     if store is None:
         return []
 
-    # --------------------------------------------------------
-    # Get TF-IDF objects
-    # --------------------------------------------------------
-
     vectorizer = store["vectorizer"]
-
     matrix = store["matrix"]
-
     chunks = store["chunks"]
 
     if matrix is None or not chunks:
@@ -307,48 +226,63 @@ def search_vector_store(
         len(chunks)
     )
 
-    # ========================================================
-    # CONVERT QUERY TO TF-IDF VECTOR
-    # ========================================================
+    # --------------------------------------------------------
+    # Convert query into TF-IDF
+    # --------------------------------------------------------
 
-    try:
+    query_vector = vectorizer.transform(
+        [query.strip()]
+    )
 
-        query_vector = vectorizer.transform(
-            [query.strip()]
-        )
+        # --------------------------------------------------------
+    # Calculate similarity
+    # --------------------------------------------------------
 
-    except Exception as e:
+    # TF-IDF vectors are L2-normalized by default,
+    # so dot product gives cosine similarity.
 
-        print(
-            f"Could not vectorize query: {e}"
-        )
+    scores = (
+        query_vector @ matrix.T
+    ).toarray().ravel()
 
-        return []
 
-    # ========================================================
-    # CALCULATE COSINE SIMILARITY
-    # ========================================================
+    # --------------------------------------------------------
+    # Get highest scoring chunks
+    # --------------------------------------------------------
 
-    similarities = cosine_similarity(
-        query_vector,
-        matrix
-    )[0]
+    if len(scores) > k:
 
-    # ========================================================
-    # GET TOP RESULTS
-    # ========================================================
+        top_indices = np.argpartition(
+            scores,
+            -k
+        )[-k:]
 
-    ranked_indices = similarities.argsort()[::-1]
+        top_indices = top_indices[
+            np.argsort(
+                scores[top_indices]
+            )[::-1]
+        ]
+
+    else:
+
+        top_indices = np.argsort(
+            scores
+        )[::-1]
+
+
+    # --------------------------------------------------------
+    # Build results
+    # --------------------------------------------------------
 
     results = []
 
-    for chunk_index in ranked_indices[:k]:
+    for index in top_indices:
 
         score = float(
-            similarities[chunk_index]
+            scores[index]
         )
 
-        # Skip completely unrelated chunks
+        # Ignore completely unrelated chunks
 
         if score <= 0:
             continue
@@ -356,69 +290,28 @@ def search_vector_store(
         results.append({
 
             "text":
-                chunks[chunk_index],
+                chunks[index],
 
             "score":
                 score
-
         })
 
+
     return results
-
-
-# ============================================================
-# GET ALL CHUNKS
-# ============================================================
-
-def get_all_chunks(
-    document_id=None,
-    owner=None
-):
-
-    owner_key = _get_owner_key(owner)
-
-    # --------------------------------------------------------
-    # Use current document if none specified
-    # --------------------------------------------------------
-
-    if document_id is None:
-
-        document_id = current_document_ids.get(
-            owner_key
-        )
-
-    if document_id is None:
-        return []
-
-    user_store = document_stores.get(
-        owner_key,
-        {}
-    )
-
-    store = user_store.get(
-        document_id
-    )
-
-    if store is None:
-        return []
-
-    return store["chunks"]
-
-
-# ============================================================
-# GET ALL DOCUMENTS
-# ============================================================
 
 def get_all_documents(
     owner=None
 ):
 
-    owner_key = _get_owner_key(owner)
+    if not owner:
+        return []
 
-    user_store = document_stores.get(
-        owner_key,
-        {}
+    user_store = get_user_store(
+        owner
     )
+
+    if not user_store:
+        return []
 
     documents = []
 
@@ -437,7 +330,6 @@ def get_all_documents(
 
             "chunk_count":
                 store["chunk_count"]
-
         })
 
     # Newest first
@@ -456,12 +348,15 @@ def get_document(
     owner=None
 ):
 
-    owner_key = _get_owner_key(owner)
+    if not owner:
+        return None
 
-    user_store = document_stores.get(
-        owner_key,
-        {}
+    user_store = get_user_store(
+        owner
     )
+
+    if not user_store:
+        return None
 
     store = user_store.get(
         document_id
@@ -483,7 +378,6 @@ def get_document(
 
         "chunk_count":
             store["chunk_count"]
-
     }
 
 
@@ -496,20 +390,17 @@ def set_current_document(
     owner=None
 ):
 
-    owner_key = _get_owner_key(owner)
+    if not owner:
+        return False
 
-    user_store = document_stores.get(
-        owner_key,
-        {}
+    user_store = get_user_store(
+        owner
     )
 
     if document_id not in user_store:
-
         return False
 
-    current_document_ids[
-        owner_key
-    ] = document_id
+    current_document_ids[owner] = document_id
 
     print(
         f"Current document changed to: "
@@ -527,10 +418,11 @@ def get_current_document(
     owner=None
 ):
 
-    owner_key = _get_owner_key(owner)
+    if not owner:
+        return None
 
     return current_document_ids.get(
-        owner_key
+        owner
     )
 
 
@@ -543,20 +435,17 @@ def delete_document(
     owner=None
 ):
 
-    owner_key = _get_owner_key(owner)
+    if not owner:
+        return False
 
-    user_store = document_stores.get(
-        owner_key,
-        {}
+    user_store = get_user_store(
+        owner
     )
 
     if document_id not in user_store:
-
         return False
 
-    # --------------------------------------------------------
     # Delete document
-    # --------------------------------------------------------
 
     del user_store[
         document_id
@@ -566,19 +455,13 @@ def delete_document(
     # If deleted document was selected
     # --------------------------------------------------------
 
-    if current_document_ids.get(
-        owner_key
-    ) == document_id:
+    if current_document_ids.get(owner) == document_id:
 
-        current_document_ids[
-            owner_key
-        ] = None
+        current_document_ids[owner] = None
 
         if user_store:
 
-            current_document_ids[
-                owner_key
-            ] = next(
+            current_document_ids[owner] = next(
                 iter(user_store)
             )
 
@@ -590,18 +473,26 @@ def delete_document(
 
 
 # ============================================================
-# CLEAR ALL VECTOR STORES
+# CLEAR USER VECTOR STORE
 # ============================================================
 
-def clear_vector_store():
+def clear_vector_store(
+    owner=None
+):
 
-    global document_stores
-    global current_document_ids
+    if not owner:
+        return
 
-    document_stores = {}
+    document_stores.pop(
+        owner,
+        None
+    )
 
-    current_document_ids = {}
+    current_document_ids.pop(
+        owner,
+        None
+    )
 
     print(
-        "All vector stores cleared."
+        f"Vector stores cleared for: {owner}"
     )
