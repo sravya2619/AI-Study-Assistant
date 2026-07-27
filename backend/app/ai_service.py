@@ -1,6 +1,13 @@
-import ollama
 import json
 import re
+import os
+from groq import Groq
+import json
+import re
+
+client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+
+MODEL_NAME = "llama-3.1-8b-instant"
 
 
 # ============================================================
@@ -30,10 +37,10 @@ def ask_llama(
     num_predict=1000
 ):
     """
-    Send a prompt to Ollama with controlled generation settings.
+    Send a prompt to Groq.
     """
 
-    response = ollama.chat(
+    response = client.chat.completions.create(
         model=MODEL_NAME,
         messages=[
             {
@@ -41,13 +48,11 @@ def ask_llama(
                 "content": prompt
             }
         ],
-        options={
-            "temperature": temperature,
-            "num_predict": num_predict
-        }
+        temperature=temperature,
+        max_tokens=num_predict,
     )
 
-    return response["message"]["content"].strip()
+    return response.choices[0].message.content.strip()
 
 
 # ============================================================
